@@ -20,6 +20,7 @@ class News(Base):
     keywords = Column(ARRAY(String))
     is_ai_content = Column(Boolean, default=False)
     sentiment = Column(Float)
+    importance = Column(Float)
 
     __table_args__ = (
         Index('idx_news_published_at', 'published_at'),

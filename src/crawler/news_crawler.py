@@ -1,15 +1,17 @@
-import asyncio
 import random
-import aiohttp
+from time import sleep
+import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from pytz import timezone
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
-from src.database.db import async_engine
-from src.models.news import News
-from src.config.settings import HEADERS, SEARCH_WORDS, SLEEP_MIN, SLEEP_MAX
+#from sqlalchemy.orm import Session
+#from src.database.db import SessionLocal
+#from src.models.news import News
+from src.config.settings import HEADERS, SLEEP_MIN, SLEEP_MAX, ARTICLES_PER_KEYWORD, ARTICLES_KEYWORDS, BACKEND_URL
+import json
+import os
+from datetime import datetime
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,20 +24,21 @@ yesterday = current_time - timedelta(days=1)
 date_str = yesterday.strftime("%Y%m%d")
 start_date = f"{date_str}000000"
 end_date = f"{date_str}235959"
+sort = "accuracy" # accuracy, recency, old
 
-async def fetch(session, url):
-    await asyncio.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
-    async with session.get(url) as response:
-        return await response.text()
+def fetch(session, url):
+    sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+    response = session.get(url)
+    return response.text
 
-async def get_url_list(session, search_str):
+def get_url_list(session, search_str):
     url_list = []
     page = 1
-    while True:
-        base_url = f"https://search.daum.net/search?nil_suggest=btn&w=news&DA=PGD&cluster=y&q={search_str}&sort=old&sd={start_date}&ed={end_date}&period=u&p={page}"
-        logger.info(f"Crawling page: {base_url}")
+    while len(url_list) < ARTICLES_PER_KEYWORD:
+        base_url = f"https://search.daum.net/search?nil_suggest=btn&w=news&DA=PGD&cluster=y&q={search_str}&sort={sort}&sd={start_date}&ed={end_date}&period=u&p={page}"
+        logger.info(f"크롤링 중인 페이지: {base_url}")
         
-        html = await fetch(session, base_url)
+        html = fetch(session, base_url)
         soup = BeautifulSoup(html, 'html.parser')
         
         titles = soup.find_all('div', class_='item-title')
@@ -46,15 +49,21 @@ async def get_url_list(session, search_str):
             a_tag = title.find('a')
             if a_tag and 'href' in a_tag.attrs:
                 link = a_tag['href']
+                logger.info(f"URL : '{link}'")
                 if link not in url_list:
                     url_list.append(link)
+                    if len(url_list) >= ARTICLES_PER_KEYWORD:
+                        return url_list
                 else:
+                    logger.info(f"중복 기사 발견. '{search_str}' 키워드 크롤링을 중단합니다.")
                     return url_list
+        
         page += 1
     return url_list
-async def get_content(session, url):
+
+def get_content(session, url, keyword):
     logger.info(f"Fetching content from: {url}")
-    html = await fetch(session, url)
+    html = fetch(session, url)
     soup = BeautifulSoup(html, 'html.parser')
     
     title = soup.find('h3', class_='tit_view').get_text().strip()
@@ -65,32 +74,66 @@ async def get_content(session, url):
         "title": title,
         "content": content,
         "write_date": write_date,
-        "url": url
+        "url": url,
+        "keywords": [keyword]  # 키워드를 리스트로 변경
     }
 
-async def save_to_database(db: AsyncSession, articles):
-    for article in articles:
-        news = News(
-            title=article['title'],
-            content=article['content'],
-            url=article['url'],
-            published_at=datetime.strptime(article['write_date'], "%Y.%m.%d. %H:%M"),
-            source="Daum",
-            crawled_at=datetime.now(seoul_tz)
-        )
-        db.add(news)
-    await db.commit()
-    logger.info(f"Saved {len(articles)} articles to the database")
+def save_to_file(articles):
+    if not articles:
+        logger.info("저장할 기사가 없습니다.")
+        return
 
-async def crawl_daum_news():
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        url_lists = await asyncio.gather(*[get_url_list(session, word) for word in SEARCH_WORDS])
-        all_urls = list(set([url for sublist in url_lists for url in sublist]))
+    current_time = datetime.now(seoul_tz)
+    filename = f"/result/{current_time.strftime('%Y%m%d')}.jsonl"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        for article in articles:
+            json.dump(article, f, ensure_ascii=False)
+            f.write('\n')
+    logger.info(f"{len(articles)}개의 기사를 파일에 저장했습니다: {filename}")
+    return filename
+
+def send_file_to_backend(filename):
+    url = f"{BACKEND_URL}/api/upload-jsonl"
+    with open(filename, 'rb') as file:
+        files = {'file': file}
+        try:
+            response = requests.post(url, files=files)
+            response.raise_for_status()  # 오류 발생 시 예외 발생
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"파일 전송 중 오류 발생: {e}")
+            return {"error": str(e)}
+
+def crawl_daum_news():
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    
+    unique_articles = {}  # URL을 키로 사용하여 기사를 저장
+
+    for keyword in ARTICLES_KEYWORDS:
+        logger.info(f"'{keyword}' 키워드에 대한 뉴스 크롤링 시작")
+        url_list = get_url_list(session, keyword)
         
-        articles = await asyncio.gather(*[get_content(session, url) for url in all_urls])
+        for url in url_list:
+            if url not in unique_articles:
+                article = get_content(session, url, keyword)
+                if article:
+                    article['keywords'] = [keyword]  # 키워드 리스트로 변경
+                    unique_articles[url] = article
+            else:
+                # 이미 존재하는 기사라면 키워드만 추가
+                if keyword not in unique_articles[url]['keywords']:
+                    unique_articles[url]['keywords'].append(keyword)
+                logger.info(f"중복된 URL에 키워드 추가: {url}, 키워드: {keyword}")
         
-        async_session = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            await save_to_database(db, articles)
-def crawl_news_wrapper():
-    asyncio.run(crawl_daum_news())
+        logger.info(f"'{keyword}' 키워드에 대해 {len(url_list)}개의 기사를 크롤링했습니다.")
+
+    # 딕셔너리 값만 리스트로 변환하여 저장
+    all_articles = list(unique_articles.values())
+    filename = save_to_file(all_articles)
+    
+    # 파일 전송
+    result = send_file_to_backend(filename)
+    logger.info(f"파일 전송 결과: {result}")

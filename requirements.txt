@@ -1,6 +1,7 @@
-aiohttp
+requests
 beautifulsoup4
 sqlalchemy
 psycopg2-binary
 python-dotenv
 pytz
+schedule
