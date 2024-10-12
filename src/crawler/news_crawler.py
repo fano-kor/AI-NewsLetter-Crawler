@@ -67,13 +67,13 @@ def get_content(session, url, keyword):
     soup = BeautifulSoup(html, 'html.parser')
     
     title = soup.find('h3', class_='tit_view').get_text().strip()
-    write_date = soup.find('span', class_='num_date').get_text().strip()
+    published_at = soup.find('span', class_='num_date').get_text().strip()
     content = soup.find('div', class_='article_view').get_text().replace('\n', ' ').strip()
     
     return {
         "title": title,
         "content": content,
-        "write_date": write_date,
+        "published_at": published_at,
         "url": url,
         "keywords": [keyword]  # 키워드를 리스트로 변경
     }
@@ -95,12 +95,13 @@ def save_to_file(articles):
     return filename
 
 def send_file_to_backend(filename):
-    url = f"{BACKEND_URL}/api/upload-jsonl"
+    url = f"{BACKEND_URL}/api/news"
     with open(filename, 'rb') as file:
-        files = {'file': file}
+        files = {'news.jsonl': file}
         try:
             response = requests.post(url, files=files)
             response.raise_for_status()  # 오류 발생 시 예외 발생
+            logger.info(f"파일 전송 성공: {response.json()}")
             return response.json()
         except requests.RequestException as e:
             logger.error(f"파일 전송 중 오류 발생: {e}")

@@ -18,8 +18,6 @@ class News(Base):
     crawled_at = Column(DateTime(timezone=True), server_default=func.now())
     category = Column(String(50))
     keywords = Column(ARRAY(String))
-    is_ai_content = Column(Boolean, default=False)
-    sentiment = Column(Float)
     importance = Column(Float)
 
     __table_args__ = (

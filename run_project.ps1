@@ -1,5 +1,11 @@
 # run_project.ps1
 
+# 명령줄 인수를 받아옵니다
+param(
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [string[]]$ScriptArgs
+)
+
 # Create virtual environment if it doesn't exist
 if (-not (Test-Path "venv")) {
     Write-Host "Creating virtual environment..."
@@ -14,9 +20,9 @@ Write-Host "Activating virtual environment..."
 Write-Host "Installing required packages..."
 pip install -r requirements.txt
 
-# Run the program
+# Run the program with passed arguments
 Write-Host "Running the program..."
-python main.py
+python main.py $ScriptArgs
 
 # Deactivate virtual environment
 deactivate
