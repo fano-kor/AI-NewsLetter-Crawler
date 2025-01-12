@@ -1,9 +1,12 @@
 # run_project.ps1
 
-# 명령줄 인수를 받아옵니다
 param(
+    [Parameter(Mandatory=$false)]
+    [Alias("i")]
+    [switch]$Immediate,
+
     [Parameter(ValueFromRemainingArguments=$true)]
-    [string[]]$ScriptArgs
+    [string[]]$RemainingArgs
 )
 
 # Create virtual environment if it doesn't exist
@@ -20,9 +23,18 @@ Write-Host "Activating virtual environment..."
 Write-Host "Installing required packages..."
 pip install -r requirements.txt
 
+# Prepare arguments for main.py
+$MainArgs = @()
+if ($Immediate) {
+    $MainArgs += "--immediate"
+}
+if ($RemainingArgs) {
+    $MainArgs += $RemainingArgs
+}
+
 # Run the program with passed arguments
 Write-Host "Running the program..."
-python main.py $ScriptArgs
+python main.py $MainArgs
 
 # Deactivate virtual environment
 deactivate
